@@ -1,16 +1,20 @@
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+import os
 
 
-batch_size = 32
-block_size = 8
+batch_size = 64
+block_size = 256
 max_iters = 5000
 eval_interval = 300
-learning_rate = 1e-3
+learning_rate = 3e-4
 device = "cuda" if torch.cuda.is_available() else "cpu"
 eval_iters = 200
-n_embed = 32
+n_embed = 384
+n_head = 6
+n_layer = 6
+dropout = 0.2
 #--------------------------------
 
 torch.manual_seed(1337)
@@ -59,6 +63,7 @@ class Head(nn.Module):
         self.query =nn.Linear(n_embed, head_size,bias=False) 
         self.value=nn.Linear(n_embed, head_size,bias=False)
         self.register_buffer('tril', torch.tril(torch.ones(block_size,block_size)))
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
         B, T, C = x.shape
@@ -67,6 +72,7 @@ class Head(nn.Module):
         wei = q @ k.transpose(-2,-1)/(C)**0.5 #B,T,T
         wei = wei.masked_fill(self.tril[:T, :T]==0,-float('inf'))
         wei = F.softmax(wei,-1)
+        wei = self.dropout(wei)
         v = self.value(x) #B,T,Hs
         out = wei @ v #B,T,T @ B,T,Hs-->B,T,Hs
 
@@ -78,10 +84,12 @@ class MultiHeadAttention(nn.Module):
         self.heads = [Head(head_size) for _ in range(num_head)]
         self.heads = nn.ModuleList(self.heads)
         self.proj = nn.Linear(n_embed, n_embed)
+        self.dropout = nn.Dropout(dropout)
     
     def forward(self,x):
         out = torch.cat([head(x) for head in self.heads], dim=-1)#concatenate over channel dim
         out = self.proj(out)
+        out = self.dropout(out)
         return out
 
 class Block(nn.Module):
@@ -90,10 +98,12 @@ class Block(nn.Module):
         head_size = n_embed // n_head
         self.head = MultiHeadAttention(n_head, head_size) 
         self.ffwd = FeedForward(n_embed)
+        self.ln1 = nn.LayerNorm(n_embed)
+        self.ln2 = nn.LayerNorm(n_embed)
 
     def forward(self, x):
-        x = x + self.head(x)
-        out = x + self.ffwd(x)
+        x = x + self.head(self.ln1(x))
+        out = x + self.ffwd(self.ln2(x))
 
         return out
 
@@ -108,12 +118,16 @@ class BigramLanguageModel(nn.Module):
         # self.sa_head = Head(n_embed) #encoder head
         # self.sa_head = MultiHeadAttention(4, n_embed//4)
         # self.ffwd = FeedForward(n_embed)
+        self.blocks = nn.Sequential(*[Block(n_embed,n_head=n_head) for _ in range(n_layer)])
+        # self.blocks = nn.Sequential(
+        #     Block(n_embed,n_head=4),
+        #     Block(n_embed,n_head=4),
+        #     Block(n_embed,n_head=4),
+        #     nn.LayerNorm(n_embed),
+        #     nn.Dropout(dropout)
 
-        self.blocks = nn.Sequential(
-            Block(n_embed,n_head=4),
-            Block(n_embed,n_head=4),
-            Block(n_embed,n_head=4)
-        )        
+        # )        
+        self.ln = nn.LayerNorm(n_embed)
         self.lm_head = nn.Linear(n_embed,vocab_size) #B,T,vocab_size#decoder head
 
     def forward(self, idx, target=None):
@@ -125,6 +139,7 @@ class BigramLanguageModel(nn.Module):
         # x = self.sa_head(x)#(B,T,C)
         # x = self.ffwd(x)#(B,T,C)
         x = self.blocks(x)
+        x = self.ln(x)
         logit = self.lm_head(x) #(B,T,vocab_size)
 
         if target is None:
@@ -161,24 +176,29 @@ def estimate_loss():
     model.train()
     return out
 
+modelPath = "model.pt"
+if not os.path.exists(modelPath):
+    model = BigramLanguageModel()
+    m = model.to(device)
 
-model = BigramLanguageModel()
-m = model.to(device)
 
-optimizer = torch.optim.AdamW(m.parameters(), lr=1e-3)
+    optimizer = torch.optim.AdamW(m.parameters(), lr=1e-3)
 
-batch_size = 32
+    batch_size = 32
 
-for steps in range(max_iters):
+    for steps in range(max_iters):
 
-    if steps%eval_iters==0:
-        losses = estimate_loss()
-        print(f"step {steps} train loss:{losses['train']:.4f} val loss:{losses['val']:.4f}")
-    xb, yb = get_batch("train")
-    logit,loss = m(xb,yb)
-    optimizer.zero_grad()
-    loss.backward()
-    optimizer.step()
+        if steps%eval_iters==0:
+            losses = estimate_loss()
+            print(f"step {steps} train loss:{losses['train']:.4f} val loss:{losses['val']:.4f}")
+        xb, yb = get_batch("train")
+        logit,loss = m(xb,yb)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+    torch.save(m, modelPath)
+else:
+    m = torch.load(modelPath)
 
 context = torch.zeros((1,1), dtype=torch.long, device=device)
 print(decode(m.generate(context, max_num_tokens=500)[0].tolist()))
