@@ -61,7 +61,15 @@ class Head(nn.Module):
 
         return out
 
-
+class MultiHeadAttention(nn.Module):
+    def __init__(self, num_head, head_size):
+        super().__init__()
+        self.heads = [Head(head_size) for _ in range(num_head)]
+        self.heads = nn.ModuleList(self.heads)
+    
+    def forward(self,x):
+        out = torch.cat([head(x) for head in self.heads], dim=-1)#concatenate over channel dim
+        return out
 
 class BigramLanguageModel(nn.Module):
 
@@ -69,7 +77,8 @@ class BigramLanguageModel(nn.Module):
         super().__init__()
         self.token_embedding_table = nn.Embedding(vocab_size, n_embed) #B,T,C
         self.position_embedding_table = nn.Embedding(block_size, n_embed)
-        self.sa_head = Head(n_embed) #encoder head
+        # self.sa_head = Head(n_embed) #encoder head
+        self.sa_head = MultiHeadAttention(4, n_embed//4)
         self.lm_head = nn.Linear(n_embed,vocab_size) #B,T,vocab_size#decoder head
 
     def forward(self, idx, target=None):
@@ -93,8 +102,8 @@ class BigramLanguageModel(nn.Module):
     def generate(self, idx, max_num_tokens=1):
         for _ in range(max_num_tokens):
 
-            idx = idx[:, -block_size:]
-            logit, _ = self(idx)
+            idx_cond = idx[:, -block_size:]
+            logit, _ = self(idx_cond)
             logit = logit[:, -1, :]#take logit of the last time dimension (B,C)
             prob = F.softmax(logit, dim=-1)
             idx_next = torch.multinomial(prob, num_samples=1) #(B,1) each batch predicts a token
@@ -135,4 +144,4 @@ for steps in range(max_iters):
     optimizer.step()
 
 context = torch.zeros((1,1), dtype=torch.long, device=device)
-print(decode(m.generate(context, 100)[0].tolist()))
+print(decode(m.generate(context, max_num_tokens=500)[0].tolist()))
