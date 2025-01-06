@@ -40,6 +40,16 @@ def get_batch(split):
     y = y.to(device)
     return x,y
 
+class FeedForward(nn.Module):
+    def __init__(self, n_embed):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(n_embed, n_embed),
+            nn.ReLU()
+        )
+
+    def forward(self, x):
+        return self.net(x)
 
 class Head(nn.Module):
     def __init__(self, head_size):
@@ -79,6 +89,7 @@ class BigramLanguageModel(nn.Module):
         self.position_embedding_table = nn.Embedding(block_size, n_embed)
         # self.sa_head = Head(n_embed) #encoder head
         self.sa_head = MultiHeadAttention(4, n_embed//4)
+        self.ffwd = FeedForward(n_embed)
         self.lm_head = nn.Linear(n_embed,vocab_size) #B,T,vocab_size#decoder head
 
     def forward(self, idx, target=None):
@@ -88,6 +99,7 @@ class BigramLanguageModel(nn.Module):
         pos_embed = self.position_embedding_table(torch.arange(T,device=device)) # (T,C)
         x = tok_embed + pos_embed #(B,T,C)
         x = self.sa_head(x)
+        x = self.ffwd(x)
         logit = self.lm_head(x) #(B,T,vocab_size)
 
         if target is None:
