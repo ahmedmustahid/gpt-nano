@@ -41,6 +41,27 @@ def get_batch(split):
     return x,y
 
 
+class Head(nn.Module):
+    def __init__(self, head_size):
+        super().__init__()
+        self.key = nn.Linear(n_embed, head_size,bias=False)
+        self.query =nn.Linear(n_embed, head_size,bias=False) 
+        self.value=nn.Linear(n_embed, head_size,bias=False)
+        self.register_buffer('tril', torch.tril(torch.ones(block_size,block_size)))
+
+    def forward(self, x):
+        B, T, C = x.shape
+        k = self.key(x) #(B,T,Hs)#Hs==C
+        q = self.query(x)#(B,T,Hs)
+        wei = q @ k.transpose(-2,-1)/(C)**0.5 #B,T,T
+        wei = wei.masked_fill(self.tril[:T, :T]==0,-float('inf'))
+        wei = F.softmax(wei,-1)
+        v = self.value(x) #B,T,Hs
+        out = wei @ v #B,T,T @ B,T,Hs-->B,T,Hs
+
+        return out
+
+
 
 class BigramLanguageModel(nn.Module):
 
@@ -48,7 +69,8 @@ class BigramLanguageModel(nn.Module):
         super().__init__()
         self.token_embedding_table = nn.Embedding(vocab_size, n_embed) #B,T,C
         self.position_embedding_table = nn.Embedding(block_size, n_embed)
-        self.linear = nn.Linear(n_embed,vocab_size) #B,T,vocab_size
+        self.sa_head = Head(n_embed) #encoder head
+        self.lm_head = nn.Linear(n_embed,vocab_size) #B,T,vocab_size#decoder head
 
     def forward(self, idx, target=None):
 
@@ -56,7 +78,8 @@ class BigramLanguageModel(nn.Module):
         tok_embed = self.token_embedding_table(idx) #(B ie batch,T ie time,Channel ie n_embed)
         pos_embed = self.position_embedding_table(torch.arange(T,device=device)) # (T,C)
         x = tok_embed + pos_embed #(B,T,C)
-        logit = self.linear(x) #(B,T,vocab_size)
+        x = self.sa_head(x)
+        logit = self.lm_head(x) #(B,T,vocab_size)
 
         if target is None:
             loss = None
