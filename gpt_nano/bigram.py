@@ -5,9 +5,9 @@ from torch.nn import functional as F
 
 batch_size = 32
 block_size = 8
-max_iters = 3000
+max_iters = 5000
 eval_interval = 300
-learning_rate = 1e-2
+learning_rate = 1e-3
 device = "cuda" if torch.cuda.is_available() else "cpu"
 eval_iters = 200
 n_embed = 32
@@ -92,6 +92,8 @@ class BigramLanguageModel(nn.Module):
 
     def generate(self, idx, max_num_tokens=1):
         for _ in range(max_num_tokens):
+
+            idx = idx[:, -block_size:]
             logit, _ = self(idx)
             logit = logit[:, -1, :]#take logit of the last time dimension (B,C)
             prob = F.softmax(logit, dim=-1)
