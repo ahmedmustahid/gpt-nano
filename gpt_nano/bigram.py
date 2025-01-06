@@ -89,8 +89,8 @@ class Block(nn.Module):
         self.ffwd = FeedForward(n_embed)
 
     def forward(self, x):
-        x = self.head(x)
-        out = self.ffwd(x)
+        x = x + self.head(x)
+        out = x + self.ffwd(x)
 
         return out
 
