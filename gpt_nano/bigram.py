@@ -81,6 +81,21 @@ class MultiHeadAttention(nn.Module):
         out = torch.cat([head(x) for head in self.heads], dim=-1)#concatenate over channel dim
         return out
 
+class Block(nn.Module):
+    def __init__(self, n_embed, n_head):
+        super().__init__()
+        head_size = n_embed // n_head
+        self.head = MultiHeadAttention(n_head, head_size) 
+        self.ffwd = FeedForward(n_embed)
+
+    def forward(self, x):
+        x = self.head(x)
+        out = self.ffwd(x)
+
+        return out
+
+
+
 class BigramLanguageModel(nn.Module):
 
     def __init__(self):
@@ -88,8 +103,14 @@ class BigramLanguageModel(nn.Module):
         self.token_embedding_table = nn.Embedding(vocab_size, n_embed) #B,T,C
         self.position_embedding_table = nn.Embedding(block_size, n_embed)
         # self.sa_head = Head(n_embed) #encoder head
-        self.sa_head = MultiHeadAttention(4, n_embed//4)
-        self.ffwd = FeedForward(n_embed)
+        # self.sa_head = MultiHeadAttention(4, n_embed//4)
+        # self.ffwd = FeedForward(n_embed)
+
+        self.blocks = nn.Sequential(
+            Block(n_embed,n_head=4),
+            Block(n_embed,n_head=4),
+            Block(n_embed,n_head=4)
+        )        
         self.lm_head = nn.Linear(n_embed,vocab_size) #B,T,vocab_size#decoder head
 
     def forward(self, idx, target=None):
@@ -98,8 +119,9 @@ class BigramLanguageModel(nn.Module):
         tok_embed = self.token_embedding_table(idx) #(B ie batch,T ie time,Channel ie n_embed)
         pos_embed = self.position_embedding_table(torch.arange(T,device=device)) # (T,C)
         x = tok_embed + pos_embed #(B,T,C)
-        x = self.sa_head(x)
-        x = self.ffwd(x)
+        # x = self.sa_head(x)#(B,T,C)
+        # x = self.ffwd(x)#(B,T,C)
+        x = self.blocks(x)
         logit = self.lm_head(x) #(B,T,vocab_size)
 
         if target is None:
